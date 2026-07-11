@@ -1,7 +1,6 @@
 {
-  "name": "secure-video-hub",
+  "name": "lol-backend-updater",
   "version": "1.0.0",
-  "description": "GitHub integrated video link dashboard",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
