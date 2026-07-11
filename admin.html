@@ -2,22 +2,30 @@
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LOL - অ্যাডমিন প্যানেল</title>
     <style>
-        body { background: #090d16; color: #fff; font-family: sans-serif; padding: 50px; text-align: center;}
-        .box { max-width: 500px; margin: 0 auto; background: #151f32; padding: 30px; border-radius: 12px; }
-        input { width: 100%; padding: 12px; margin: 15px 0; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; }
-        button { background: #06b6d4; color: #fff; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; }
-        button:hover { background: #0891b2; }
-        #status { margin-top: 15px; font-size: 14px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+        body { background: #090d16; color: #f8fafc; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 20px; }
+        .admin-box { max-width: 500px; width: 100%; background: #151f32; padding: 30px; border-radius: 12px; border: 1px solid #1e293b; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { font-size: 24px; margin-bottom: 5px; color: #00f2fe; }
+        p { color: #94a3b8; font-size: 14px; margin-bottom: 20px; }
+        input { width: 100%; padding: 14px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 15px; outline: none; }
+        input:focus { border-color: #06b6d4; }
+        button { background: linear-gradient(to right, #06b6d4, #4facfe); color: #fff; border: none; padding: 14px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; font-size: 16px; transition: 0.3s; }
+        button:hover { opacity: 0.9; transform: translateY(-2px); }
+        #status { margin-top: 15px; font-size: 14px; font-weight: 500; }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h2>ভিডিও লিংক ম্যানেজার</h2>
-        <p style="color: #94a3b8; font-size: 13px;">এখানে লিংক পেস্ট করলে তা সরাসরি গিটহাব রেপোতে আপডেট হবে</p>
-        <input type="url" id="videoUrl" placeholder="https://example.com/video">
-        <button onclick="addLink()">লিংক যুক্ত করুন</button>
+
+    <div class="admin-box">
+        <h2>LOL - ভিডিও অ্যাডমিন প্যানেল</h2>
+        <p>১ম রেপোজিটরির index.html-এ সরাসরি ভিডিও লিংক পুশ করুন</p>
+        
+        <input type="url" id="videoUrl" placeholder="এখানে ভিডিওর লিংক দিন (যেমন: https://...)">
+        <button onclick="addLink()">ভিডিও যুক্ত করুন</button>
+        
         <div id="status"></div>
     </div>
 
@@ -27,13 +35,14 @@
             const status = document.getElementById('status');
             const url = urlInput.value.trim();
 
-            if(!url) return alert('অনুগ্রহ করে একটি সঠিক লিংক দিন');
+            if(!url) return alert('অনুগ্রহ করে একটি সঠিক ভিডিও লিংক দিন');
 
-            status.innerText = "গিটহাবে সেভ হচ্ছে...";
-            status.style.color = "#e2e8f0";
+            status.innerText = "১ম রেপোতে পুশ করা হচ্ছে... অপেক্ষা করুন...";
+            status.style.color = "#cbd5e1";
 
             try {
-                const response = await fetch('/api/videos', {
+                // এখানে আপনার Render-এর আসল লাইভ ব্যাকএন্ড লিংক বসাতে পারেন, অথবা ডোমেইন সেম থাকলে আপেক্ষিক পাথ রাখতে পারেন।
+                const response = await fetch('/api/add-video', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url })
@@ -45,11 +54,11 @@
                     status.style.color = "#4ade80";
                     urlInput.value = "";
                 } else {
-                    status.innerText = result.error;
+                    status.innerText = result.error || "কিছু একটা ভুল হয়েছে";
                     status.style.color = "#f87171";
                 }
             } catch (err) {
-                status.innerText = "সার্ভার এরর!";
+                status.innerText = "সার্ভার বা নেটওয়ার্ক এরর!";
                 status.style.color = "#f87171";
             }
         }
