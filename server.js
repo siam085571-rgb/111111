@@ -7,13 +7,11 @@ const app = express();
 app.use(express.json());
 app.use(express.static(__dirname));
 
-// গিটহাব কনফিগারেশন (.env ফাইল থেকে আসবে)
 const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
-const OWNER = process.env.GITHUB_OWNER;       // আপনার গিটহাব ইউজারনেম
-const REPO = process.env.GITHUB_REPO;         // প্রথম রিপোজিটরির নাম (যেখানে index.html আছে)
-const PATH = 'index.html';                     // ফাইলের পাথ
+const OWNER = process.env.GITHUB_OWNER;       
+const REPO = process.env.GITHUB_REPO;         
+const PATH = 'index.html';                     
 
-// অ্যাডমিন পেজ রেন্ডার
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'admin.html'));
 });
@@ -24,16 +22,18 @@ app.get('/api/links', async (req, res) => {
         const { data } = await octokit.repos.getContent({ owner: OWNER, repo: REPO, path: PATH });
         const content = Buffer.from(data.content, 'base64').toString('utf-8');
         
-        // START_LINKS এবং END_LINKS এর ভেতরের অ্যারে এক্সট্র্যাক্ট করা হচ্ছে
-        const match = content.match(/\/\/ START_LINKS\s*const videoLinks = (\[[\s\S]*?\]);\s*\/\/ END_LINKS/);
+        // Regex আরো সহজ করা হলো যাতে স্পেসের জন্য ইরর না আসে
+        const match = content.match(/\/\/ START_LINKS[\s\S]*?const videoLinks = (\[[\s\S]*?\]);[\s\S]*?\/\/ END_LINKS/);
         
         if (match) {
-            const links = JSON.parse(match[1].replace(/'/g, '"'));
+            // একক বা ডাবল কোটেশন হ্যান্ডেল করার জন্য ফিক্স
+            const linksText = match[1].replace(/'/g, '"').replace(/,\s*\]/, ']');
+            const links = JSON.parse(linksText);
             return res.json({ success: true, links });
         }
-        res.status(400).json({ success: false, message: 'লিংক ব্লক খুঁজে পাওয়া যায়নি!' });
+        res.status(400).json({ success: false, message: 'index.html এ // START_LINKS এবং // END_LINKS ব্লকটি খুঁজে পাওয়া যায়নি!' });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, message: 'গিটহাব থেকে ডাটা আনতে পারেনি', error: error.message });
     }
 });
 
@@ -45,11 +45,10 @@ app.post('/api/links', async (req, res) => {
     }
 
     try {
-        // ১. বর্তমান ফাইল ও তার SHA কি আনা
         const { data } = await octokit.repos.getContent({ owner: OWNER, repo: REPO, path: PATH });
         const content = Buffer.from(data.content, 'base64').toString('utf-8');
         
-        // ২. নতুন টেক্সট তৈরি করা
+        // নতুন ফরম্যাটেড লিংক টেক্সট
         const formattedLinks = `// START_LINKS\n        const videoLinks = ${JSON.stringify(links, null, 12).replace(/"/g, '"')};\n        // END_LINKS`;
         
         const updatedContent = content.replace(
@@ -57,21 +56,20 @@ app.post('/api/links', async (req, res) => {
             formattedLinks
         );
 
-        // ৩. গিটহাবে ফাইল আপডেট পুশ করা
         await octokit.repos.createOrUpdateFileContents({
             owner: OWNER,
             repo: REPO,
             path: PATH,
             message: 'অ্যাডমিন প্যানেল থেকে ভিডিও লিংক আপডেট করা হয়েছে',
-            content: Buffer.from(updatedContent).toString('base64'),
+            content: Buffer.from(updatedContent, 'utf-8').toString('base64'),
             sha: data.sha
         });
 
         res.json({ success: true, message: 'গিটহাবে সফলভাবে আপডেট করা হয়েছে!' });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ success: false, message: 'গিটহাবে সেভ করতে সমস্যা হয়েছে', error: error.message });
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`সার্ভার চলছে http://localhost:${PORT}`));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`সার্ভার চলছে পোর্ট ${PORT}`));
