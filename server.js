@@ -1,84 +1,77 @@
 require('dotenv').config();
 const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
+const { Octokit } = require('@octokit/rest');
+const path = require('path');
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(express.static(__dirname));
 
-// Environment Variables থেকে ডেটা নেওয়া (Render-এ সেট করবেন)
-const GITHUB_USER = process.env.GITHUB_USER;       // আপনার গিটহাব ইউজারনেম
-const GITHUB_REPO = process.env.GITHUB_REPO;       // ১ম রেপোর নাম (যেখানে index.html আছে)
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;     // গিটহাব ক্লাসিক টোকেন
+// গিটহাব কনফিগারেশন (.env ফাইল থেকে আসবে)
+const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+const OWNER = process.env.GITHUB_OWNER;       // আপনার গিটহাব ইউজারনেম
+const REPO = process.env.GITHUB_REPO;         // প্রথম রিপোজিটরির নাম (যেখানে index.html আছে)
+const PATH = 'index.html';                     // ফাইলের পাথ
 
-const GITHUB_API = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/index.html`;
-
-const getHeaders = () => ({
-    Authorization: `token ${GITHUB_TOKEN}`,
-    Accept: 'application/vnd.github.v3+json',
-    'User-Agent': 'Render-Backend-App'
+// অ্যাডমিন পেজ রেন্ডার
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
-// নতুন লিংক যোগ করার API endpoint
-app.post('/api/add-video', async (req, res) => {
-    const { url } = req.body;
-    if (!url) return res.status(400).json({ error: 'URL প্রয়োজন' });
-
+// গিটহাব থেকে বর্তমান লিংকগুলো নিয়ে আসার API
+app.get('/api/links', async (req, res) => {
     try {
-        // ১. ১ম রেপো থেকে index.html ফাইলটি ডাউনলোড করা
-        const getRes = await axios.get(GITHUB_API, { headers: getHeaders() });
-        const sha = getRes.data.sha;
-        let htmlContent = Buffer.from(getRes.data.content, 'base64').toString('utf-8');
-
-        // ২. Regex দিয়ে videoLinks = [ ... ] অংশটি খুঁজে বের করা
-        const regex = /const\s+videoLinks\s*=\s*\[([\s\S]*?)\];/;
-        const match = htmlContent.match(regex);
-
-        if (!match) {
-            return res.status(500).json({ error: "index.html ফাইলে 'const videoLinks' খুঁজে পাওয়া যায়নি!" });
-        }
-
-        // ৩. বর্তমান লিংকগুলোর লিস্ট বের করে নতুন লিংকটি যুক্ত করা
-        let arrayContent = match[1].trim();
+        const { data } = await octokit.repos.getContent({ owner: OWNER, repo: REPO, path: PATH });
+        const content = Buffer.from(data.content, 'base64').toString('utf-8');
         
-        // যদি অলরেডি এই লিংকটি থেকে থাকে, তবে আর যোগ করবে না
-        if (arrayContent.includes(url)) {
-            return res.status(400).json({ error: 'এই ভিডিও লিংকটি অলরেডি ড্যাশবোর্ডে আছে!' });
+        // START_LINKS এবং END_LINKS এর ভেতরের অ্যারে এক্সট্র্যাক্ট করা হচ্ছে
+        const match = content.match(/\/\/ START_LINKS\s*const videoLinks = (\[[\s\S]*?\]);\s*\/\/ END_LINKS/);
+        
+        if (match) {
+            const links = JSON.parse(match[1].replace(/'/g, '"'));
+            return res.json({ success: true, links });
         }
-
-        // নতুন লিংকটি ফরম্যাট করে অ্যারের শুরুতে বা শেষে বসানো
-        const newLinkString = `"${url}"`;
-        if (arrayContent === "") {
-            arrayContent = `\n            ${newLinkString}\n        `;
-        } else {
-            // কমা দিয়ে নতুন লিংক যুক্ত করা
-            arrayContent = `\n            ${newLinkString},\n            ` + arrayContent;
-        }
-
-        // ৪. নতুন ভিডিও লিস্ট দিয়ে পুরাতন index.html আপডেট করা
-        const updatedHtml = htmlContent.replace(regex, `const videoLinks = [${arrayContent}];`);
-        const base64Content = Buffer.from(updatedHtml).toString('base64');
-
-        // ৫. ১ম রেপোতে নতুন ফাইলটি Commit/Push করে দেওয়া
-        await axios.put(GITHUB_API, {
-            message: 'Admin Panel থেকে নতুন ভিডিও যোগ করা হয়েছে',
-            content: base64Content,
-            sha: sha
-        }, { headers: getHeaders() });
-
-        res.json({ success: true, message: '১ম রেপোর index.html-এ ভিডিও সফলভাবে যুক্ত হয়েছে!' });
-
+        res.status(400).json({ success: false, message: 'লিংক ব্লক খুঁজে পাওয়া যায়নি!' });
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'গিটহাবে আপডেট করতে সমস্যা হয়েছে। টোকেন বা রেপো নাম চেক করুন।' });
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
-// Render-এর হোমপেজে সাধারণ রেসপন্স
-app.get('/', (req, res) => {
-    res.send('ভিডিও ড্যাশবোর্ড ব্যাকএন্ড সফলভাবে চালু আছে।');
+// গিটহাবে নতুন লিংক আপডেট করার API
+app.post('/api/links', async (req, res) => {
+    const { links } = req.body;
+    if (!Array.isArray(links)) {
+        return res.status(400).json({ success: false, message: 'ভুল ডাটা ফরম্যাট!' });
+    }
+
+    try {
+        // ১. বর্তমান ফাইল ও তার SHA কি আনা
+        const { data } = await octokit.repos.getContent({ owner: OWNER, repo: REPO, path: PATH });
+        const content = Buffer.from(data.content, 'base64').toString('utf-8');
+        
+        // ২. নতুন টেক্সট তৈরি করা
+        const formattedLinks = `// START_LINKS\n        const videoLinks = ${JSON.stringify(links, null, 12).replace(/"/g, '"')};\n        // END_LINKS`;
+        
+        const updatedContent = content.replace(
+            /\/\/ START_LINKS[\s\S]*?\/\/ END_LINKS/,
+            formattedLinks
+        );
+
+        // ৩. গিটহাবে ফাইল আপডেট পুশ করা
+        await octokit.repos.createOrUpdateFileContents({
+            owner: OWNER,
+            repo: REPO,
+            path: PATH,
+            message: 'অ্যাডমিন প্যানেল থেকে ভিডিও লিংক আপডেট করা হয়েছে',
+            content: Buffer.from(updatedContent).toString('base64'),
+            sha: data.sha
+        });
+
+        res.json({ success: true, message: 'গিটহাবে সফলভাবে আপডেট করা হয়েছে!' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`সার্ভার চলছে http://localhost:${PORT}`));
