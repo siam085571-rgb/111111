@@ -1,83 +1,84 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const path = require('path');
 const cors = require('cors');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-const GITHUB_USER = process.env.GITHUB_USER;
-const GITHUB_REPO = process.env.GITHUB_REPO;
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+// Environment Variables থেকে ডেটা নেওয়া (Render-এ সেট করবেন)
+const GITHUB_USER = process.env.GITHUB_USER;       // আপনার গিটহাব ইউজারনেম
+const GITHUB_REPO = process.env.GITHUB_REPO;       // ১ম রেপোর নাম (যেখানে index.html আছে)
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;     // গিটহাব ক্লাসিক টোকেন
 
-const GITHUB_API = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/videos.json`;
+const GITHUB_API = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/index.html`;
 
 const getHeaders = () => ({
     Authorization: `token ${GITHUB_TOKEN}`,
     Accept: 'application/vnd.github.v3+json',
-    'User-Agent': 'Node-Express-App'
+    'User-Agent': 'Render-Backend-App'
 });
 
-// গিটহাব থেকে লিংক আনা
-app.get('/api/videos', async (req, res) => {
-    try {
-        const response = await axios.get(GITHUB_API, { headers: getHeaders() });
-        const content = Buffer.from(response.data.content, 'base64').toString('utf-8');
-        res.json(JSON.parse(content));
-    } catch (error) {
-        if (error.response && error.response.status === 404) {
-            return res.json([]);
-        }
-        res.status(500).json({ error: 'GitHub থেকে ডেটা আনতে ব্যর্থ হয়েছে' });
-    }
-});
-
-// গিটহাবে নতুন লিংক যোগ করা
-app.post('/api/videos', async (req, res) => {
+// নতুন লিংক যোগ করার API endpoint
+app.post('/api/add-video', async (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL প্রয়োজন' });
 
     try {
-        let sha = null;
-        let currentVideos = [];
+        // ১. ১ম রেপো থেকে index.html ফাইলটি ডাউনলোড করা
+        const getRes = await axios.get(GITHUB_API, { headers: getHeaders() });
+        const sha = getRes.data.sha;
+        let htmlContent = Buffer.from(getRes.data.content, 'base64').toString('utf-8');
 
-        try {
-            const getRes = await axios.get(GITHUB_API, { headers: getHeaders() });
-            sha = getRes.data.sha;
-            currentVideos = JSON.parse(Buffer.from(getRes.data.content, 'base64').toString('utf-8'));
-        } catch (e) {
-            // ফাইল না থাকলে খালি থাকবে
+        // ২. Regex দিয়ে videoLinks = [ ... ] অংশটি খুঁজে বের করা
+        const regex = /const\s+videoLinks\s*=\s*\[([\s\S]*?)\];/;
+        const match = htmlContent.match(regex);
+
+        if (!match) {
+            return res.status(500).json({ error: "index.html ফাইলে 'const videoLinks' খুঁজে পাওয়া যায়নি!" });
         }
 
-        if (!currentVideos.includes(url)) {
-            currentVideos.push(url);
+        // ৩. বর্তমান লিংকগুলোর লিস্ট বের করে নতুন লিংকটি যুক্ত করা
+        let arrayContent = match[1].trim();
+        
+        // যদি অলরেডি এই লিংকটি থেকে থাকে, তবে আর যোগ করবে না
+        if (arrayContent.includes(url)) {
+            return res.status(400).json({ error: 'এই ভিডিও লিংকটি অলরেডি ড্যাশবোর্ডে আছে!' });
         }
 
-        const updatedContent = Buffer.from(JSON.stringify(currentVideos, null, 2)).toString('base64');
+        // নতুন লিংকটি ফরম্যাট করে অ্যারের শুরুতে বা শেষে বসানো
+        const newLinkString = `"${url}"`;
+        if (arrayContent === "") {
+            arrayContent = `\n            ${newLinkString}\n        `;
+        } else {
+            // কমা দিয়ে নতুন লিংক যুক্ত করা
+            arrayContent = `\n            ${newLinkString},\n            ` + arrayContent;
+        }
 
+        // ৪. নতুন ভিডিও লিস্ট দিয়ে পুরাতন index.html আপডেট করা
+        const updatedHtml = htmlContent.replace(regex, `const videoLinks = [${arrayContent}];`);
+        const base64Content = Buffer.from(updatedHtml).toString('base64');
+
+        // ৫. ১ম রেপোতে নতুন ফাইলটি Commit/Push করে দেওয়া
         await axios.put(GITHUB_API, {
-            message: 'নতুন লিংক যুক্ত করা হয়েছে',
-            content: updatedContent,
+            message: 'Admin Panel থেকে নতুন ভিডিও যোগ করা হয়েছে',
+            content: base64Content,
             sha: sha
         }, { headers: getHeaders() });
 
-        res.json({ success: true, message: 'লিংক গিটহাবে সফলভাবে সেভ হয়েছে!' });
+        res.json({ success: true, message: '১ম রেপোর index.html-এ ভিডিও সফলভাবে যুক্ত হয়েছে!' });
+
     } catch (error) {
-        res.status(500).json({ error: 'গিটহাবে সেভ করতে সমস্যা হয়েছে' });
+        console.error(error);
+        res.status(500).json({ error: 'গিটহাবে আপডেট করতে সমস্যা হয়েছে। টোকেন বা রেপো নাম চেক করুন।' });
     }
 });
 
-// মূল রুট বা অন্য যেকোনো রিকোয়েস্টে সরাসরি admin.html লোড হবে (কোনো public ফোল্ডার লাগবে না)
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'admin.html'), (err) => {
-        if (err) {
-            res.status(404).send("admin.html ফাইলটি রুট ডিরেক্টরিতে খুঁজে পাওয়া যায়নি!");
-        }
-    });
+// Render-এর হোমপেজে সাধারণ রেসপন্স
+app.get('/', (req, res) => {
+    res.send('ভিডিও ড্যাশবোর্ড ব্যাকএন্ড সফলভাবে চালু আছে।');
 });
 
-// Render-এর ১০০০০ পোর্টে বাইন্ড করার জন্য
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, '0.0.0.0', () => console.log(`সার্ভার চলছে পোর্ট: ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
